@@ -1,9 +1,9 @@
 #!/bin/bash
 
-RG="rg-objectreplicationmonitor"
+RG="rg-ormonitor"
 LOCATION="southcentralus"
-SRCACCT="stkirksource"
-DESTACCT="stkirktarget"
+SRCACCT="stormonsource"
+DESTACCT="stormontarget"
 
 az group create --name $RG --location $LOCATION 
 

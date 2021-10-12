@@ -7,23 +7,30 @@
             "defaultValue": "stkirkesource"
         },
         "SourceStorageAccountResourceId": {
-            "defaultValue": "/subscriptions/61b89b45-6850-48ac-b719-a7fb90bca5f0/resourceGroups/rg-ormonitor/providers/Microsoft.Storage/storageAccounts/stkirkesource",
+            "defaultValue": "[concat('/subscriptions/',subscription().id,'/resourceGroups/',resourceGroup().id,'/providers/Microsoft.Storage/',parameters('SourceStorageAccountName'))]",
             "type": "String"
         },
         "SourceStorageAccountContainerName": {
             "type": "string",
             "defaultValue": "logs"
+        },
+        "workbookId": {
+            "type": "string",
+            "defaultValue": "[newGuid()]",
+            "metadata": {
+                "description": "The unique guid for this workbook instance"
+            }
         }
     },
-    "variables": {        
-        "systemTopicName": "mystoragesystemtopic",        
+    "variables": {
+        "systemTopicName": "mystoragesystemtopic",
         "eventSubName": "subToStorage",
-        "logicAppSettings": {  
-            "name": "Get-ObjectReplicationData",          
+        "logicAppSettings": {
+            "name": "Get-ObjectReplicationData",
             "resourceId": "[resourceId('Microsoft.Logic/workflows', 'Get-ObjectReplicationData')]",
             "triggerId": "[resourceId('Microsoft.Logic/workflows/triggers', 'Get-ObjectReplicationData', 'When_a_resource_event_occurs')]"
         },
-        "LogAnalyticsWorkspaceName": "[concat('ObjectReplicationMonitor-', uniqueString(resourceGroup().id))]"
+        "LogAnalyticsWorkspaceName": "[concat('ObjectReplicationMonitor-', uniqueString(resourceGroup().id))]"        
 
     },
     "resources": [
@@ -39,6 +46,23 @@
                 "retentionInDays": 30,
                 "publicNetworkAccessForIngestion": "Enabled",
                 "publicNetworkAccessForQuery": "Enabled"
+            }
+        },
+        {
+            "name": "[parameters('workbookId')]",
+            "type": "microsoft.insights/workbooks",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2021-08-01",
+            "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', variables('LogAnalyticsWorkspaceName'))]"
+            ],
+            "kind": "shared",
+            "properties": {
+                "displayName": "Object Replication Monitor Workbook",
+                "serializedData": "[concat('{\"version\":\"Notebook/1.0\",\"items\":[{\"type\":1,\"content\":{\"json\":\"## Azure Storage Object Replication Workbook\\n---\\n\\nThis workbook provides common queries that are useful for understanding Azure Storage blobs replication status. \"},\"name\":\"text - 2\"},{\"type\":3,\"content\":{\"version\":\"KqlItem/1.0\",\"query\":\"ObjectReplicationStatus_CL\\r\\n| where Status_s != \\\"BlobCreated\\\"\\r\\n| where Status_s != \\\"ReplicationPending\\\"\\r\\n| summarize Replications = count() by Status_s\",\"showQuery\":true,\"size\":4,\"showAnalytics\":true,\"title\":\"Total Replications by Status Over Past 24 Hours\",\"timeContext\":{\"durationMs\":3600000},\"showRefreshButton\":true,\"showExportToExcel\":true,\"queryType\":0,\"resourceType\":\"microsoft.operationalinsights/workspaces\"},\"showPin\":true,\"name\":\"Total replications in past 24 hours\"},{\"type\":3,\"content\":{\"version\":\"KqlItem/1.0\",\"query\":\"ObjectReplicationStatus_CL\\r\\n| where Status_s == \\\"ReplicationSucceeded\\\" or Status_s == \\\"ReplicationFailed\\\" or Status_s == \\\"ReplicationTimeout\\\"\\r\\n| summarize Replications = avg(toint(Elapsed_s)) by Status_s, bin(TimeGenerated, 1m)\\r\\n| render timechart\",\"showQuery\":true,\"size\":1,\"aggregation\":3,\"showAnnotations\":true,\"showAnalytics\":true,\"title\":\"Replication Time (minutes) by Status Over Past 24 Hours\",\"timeContext\":{\"durationMs\":3600000},\"showExportToExcel\":true,\"queryType\":0,\"resourceType\":\"microsoft.operationalinsights/workspaces\"},\"showPin\":true,\"name\":\"Replication Time by Status Over Past 24 Hours\"},{\"type\":3,\"content\":{\"version\":\"KqlItem/1.0\",\"query\":\"ObjectReplicationStatus_CL\\n| where Status_s != \\\"BlobCreated\\\"\\n| summarize Replications = count(toint(Elapsed_s)) by Status_s, bin(TimeGenerated, 1m)\\n| render timechart\",\"showQuery\":true,\"size\":1,\"aggregation\":2,\"showAnnotations\":true,\"showAnalytics\":true,\"title\":\"Object Replication Count by Status Over Past 24 Hours\",\"timeContext\":{\"durationMs\":86400000},\"showExportToExcel\":true,\"exportToExcelOptions\":\"all\",\"queryType\":0,\"resourceType\":\"microsoft.operationalinsights/workspaces\",\"visualization\":\"timechart\"},\"showPin\":true,\"name\":\"Object Replication Count by Status Over Past 24 Hours\"},{\"type\":3,\"content\":{\"version\":\"KqlItem/1.0\",\"query\":\"ObjectReplicationStatus_CL\\r\\n| project Blob_s, Status_s, Elapsed_s,  Subject_s, Topic_s, Headers_s, TimeGenerated\\r\\n| order by TimeGenerated desc\",\"showQuery\":true,\"size\":0,\"showAnalytics\":true,\"title\":\"All Object Replication Logs Over Past 24 Hours\",\"timeContext\":{\"durationMs\":3600000},\"showExportToExcel\":true,\"exportToExcelOptions\":\"all\",\"queryType\":0,\"resourceType\":\"microsoft.operationalinsights/workspaces\",\"gridSettings\":{\"rowLimit\":500,\"filter\":true}},\"showPin\":true,\"name\":\"Object Replications in Past 24 Hours\"}],\"isLocked\":false,\"fallbackResourceIds\":[\"/subscriptions/', subscription().id, '/resourcegroups/', resourceGroup().name, '/providers/microsoft.operationalinsights/workspaces/', variables('LogAnalyticsWorkspaceName'), '\"]}')]",
+                "version": "1.0",
+                "sourceId": "[resourceId('microsoft.operationalinsights/workspaces',variables('LogAnalyticsWorkspaceName'))]",
+                "category": "workbook"
             }
         },
         {
@@ -110,7 +134,7 @@
             "apiVersion": "2017-07-01",
             "name": "[variables('logicAppSettings').name]",
             "location": "southcentralus",
-            "dependsOn": [                
+            "dependsOn": [
                 "[resourceId('Microsoft.Web/connections', 'logAnalyticsConnection')]",
                 "[resourceId('Microsoft.Web/connections', 'eventGridConnection')]"
             ],
@@ -174,7 +198,7 @@
                                     "connection": {
                                         "name": "@parameters('$connections')['azureeventgrid']['connectionId']"
                                     }
-                                },                                
+                                },
                                 "path": "[concat('/subscriptions/@{encodeURIComponent(''', subscription().id ,''')}/providers/@{encodeURIComponent(''Microsoft.Storage.StorageAccounts'')}/resource/eventSubscriptions')]",
                                 "queries": {
                                     "x-ms-api-version": "2017-09-15-preview"

@@ -1,9 +1,9 @@
 #!/bin/bash
 
-RG="rg-objectreplicationmonitor"
+RG="rg-ormonitor"
 LOCATION="southcentralus"
-SRCACCT="stkirksource"
-DESTACCT="stkirktarget"
+SRCACCT="stormonsource"
+DESTACCT="stormontarget"
 
 STORAGEKEY=$(az storage account keys list --resource-group $RG --account-name $SRCACCT --query "[0].value" --output TSV)
 
