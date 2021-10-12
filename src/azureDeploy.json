@@ -1,0 +1,509 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "SourceStorageAccountName": {
+            "type": "string",
+            "defaultValue": "stkirkesource"
+        },
+        "SourceStorageAccountResourceId": {
+            "defaultValue": "/subscriptions/61b89b45-6850-48ac-b719-a7fb90bca5f0/resourceGroups/rg-ormonitor/providers/Microsoft.Storage/storageAccounts/stkirkesource",
+            "type": "String"
+        },
+        "SourceStorageAccountContainerName": {
+            "type": "string",
+            "defaultValue": "logs"
+        }
+    },
+    "variables": {        
+        "systemTopicName": "mystoragesystemtopic",        
+        "eventSubName": "subToStorage",
+        "logicAppSettings": {  
+            "name": "Get-ObjectReplicationData",          
+            "resourceId": "[resourceId('Microsoft.Logic/workflows', 'Get-ObjectReplicationData')]",
+            "triggerId": "[resourceId('Microsoft.Logic/workflows/triggers', 'Get-ObjectReplicationData', 'When_a_resource_event_occurs')]"
+        },
+        "LogAnalyticsWorkspaceName": "[concat('ObjectReplicationMonitor-', uniqueString(resourceGroup().id))]"
+
+    },
+    "resources": [
+        {
+            "type": "microsoft.operationalinsights/workspaces",
+            "apiVersion": "2021-06-01",
+            "name": "[variables('LogAnalyticsWorkspaceName')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "sku": {
+                    "name": "pergb2018"
+                },
+                "retentionInDays": 30,
+                "publicNetworkAccessForIngestion": "Enabled",
+                "publicNetworkAccessForQuery": "Enabled"
+            }
+        },
+        {
+            "type": "Microsoft.EventGrid/systemTopics",
+            "apiVersion": "2020-04-01-preview",
+            "name": "[variables('systemTopicName')]",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "source": "[parameters('SourceStorageAccountResourceId')]",
+                "topicType": "Microsoft.Storage.StorageAccounts"
+            }
+        },
+        {
+            "type": "Microsoft.EventGrid/systemTopics/eventSubscriptions",
+            "apiVersion": "2020-04-01-preview",
+            "name": "[concat(variables('systemTopicName'), '/', variables('eventSubName'))]",
+            "dependsOn": [
+                "[resourceId('Microsoft.EventGrid/systemTopics', variables('systemTopicName'))]",
+                "[variables('logicAppSettings').name]"
+            ],
+            "properties": {
+                "destination": {
+                    "endpointType": "WebHook",
+                    "properties": {
+                        "endpointUrl": "[listCallbackUrl(variables('logicAppSettings').triggerId, '2019-05-01').value]"
+                    }
+                },
+                "filter": {
+                    "includedEventTypes": [
+                        "Microsoft.Storage.BlobCreated"
+                    ]
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "eventGridConnection",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "displayName": "azureeventgrid",
+                "customParameterValues": {},
+                "api": {
+                    "id": "[subscriptionResourceId('Microsoft.Web/locations/managedApis',resourceGroup().location, 'azureeventgrid')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Web/connections",
+            "apiVersion": "2016-06-01",
+            "name": "logAnalyticsConnection",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[resourceId('Microsoft.OperationalInsights/workspaces', variables('LogAnalyticsWorkspaceName'))]"
+            ],
+            "properties": {
+                "displayName": "logAnalyticsConnection",
+                "parameterValues": {
+                    "username": "[reference(variables('LogAnalyticsWorkspaceName'),'2021-06-01').customerId]",
+                    "password": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', variables('LogAnalyticsWorkspaceName')),'2021-06-01').primarySharedKey]"
+                },
+                "api": {
+                    "id": "[subscriptionResourceId('Microsoft.Web/locations/managedApis',resourceGroup().location, 'azureloganalyticsdatacollector')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "[variables('logicAppSettings').name]",
+            "location": "southcentralus",
+            "dependsOn": [                
+                "[resourceId('Microsoft.Web/connections', 'logAnalyticsConnection')]",
+                "[resourceId('Microsoft.Web/connections', 'eventGridConnection')]"
+            ],
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        },
+                        "LogAnalyticsTableName": {
+                            "defaultValue": "ObjectReplicationStatus",
+                            "type": "String"
+                        },
+                        "MaxPollIntervalCount": {
+                            "defaultValue": 60,
+                            "type": "Int"
+                        },
+                        "PollIntervalMinutes": {
+                            "defaultValue": 1,
+                            "type": "Int"
+                        },
+                        "StorageAccountContainerName": {
+                            "defaultValue": "[parameters('SourceStorageAccountContainerName')]",
+                            "type": "String"
+                        },
+                        "StorageAccountURL": {
+                            "defaultValue": "[concat('https://', parameters('SourceStorageAccountName'), '.blob.core.windows.net')]",
+                            "type": "String"
+                        }
+                    },
+                    "triggers": {
+                        "When_a_resource_event_occurs": {
+                            "splitOn": "@triggerBody()",
+                            "type": "ApiConnectionWebhook",
+                            "inputs": {
+                                "body": {
+                                    "properties": {
+                                        "destination": {
+                                            "endpointType": "webhook",
+                                            "properties": {
+                                                "endpointUrl": "@{listCallbackUrl()}"
+                                            }
+                                        },
+                                        "filter": {
+                                            "includedEventTypes": [
+                                                "Microsoft.Storage.BlobCreated"
+                                            ],
+                                            "subjectBeginsWith": "/blobServices/default/containers/@{parameters('StorageAccountContainerName')}"
+                                        },
+                                        "topic": "[parameters('SourceStorageAccountResourceId')]"
+                                    }
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azureeventgrid']['connectionId']"
+                                    }
+                                },                                
+                                "path": "[concat('/subscriptions/@{encodeURIComponent(''', subscription().id ,''')}/providers/@{encodeURIComponent(''Microsoft.Storage.StorageAccounts'')}/resource/eventSubscriptions')]",
+                                "queries": {
+                                    "x-ms-api-version": "2017-09-15-preview"
+                                }
+                            },
+                            "description": "When the BlobCreated event occurs for blobs prefixed with \"/blobServices/default/containers/logs\""
+                        }
+                    },
+                    "actions": {
+                        "Compose": {
+                            "runAfter": {},
+                            "type": "Compose",
+                            "inputs": "@{split(triggerBody()?['subject'], '/')?[4]}/@{split(triggerBody()?['subject'], '/')?[6]}",
+                            "description": "Get the flattened namespace for the blob (i.e. container1/blob1)"
+                        },
+                        "Initialize_IsComplete_variable": {
+                            "runAfter": {
+                                "Send_Data": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "IsComplete",
+                                        "type": "boolean",
+                                        "value": false
+                                    }
+                                ]
+                            }
+                        },
+                        "Initialize_LoopCount_variable": {
+                            "runAfter": {
+                                "Initialize_IsComplete_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "LoopCount",
+                                        "type": "integer",
+                                        "value": 1
+                                    }
+                                ]
+                            },
+                            "description": "Initialize Limit variable, used to control number of times Until loop is run"
+                        },
+                        "Initialize_ReplicationStatus_variable": {
+                            "runAfter": {
+                                "Compose": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "ReplicationStatus",
+                                        "type": "string",
+                                        "value": "BlobCreated"
+                                    }
+                                ]
+                            },
+                            "description": "Initialize the ReplicationStatus variable"
+                        },
+                        "Send_Data": {
+                            "runAfter": {
+                                "Initialize_ReplicationStatus_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ApiConnection",
+                            "inputs": {
+                                "body": "{\n\"Subject\":\"@{triggerBody()?['subject']}\",\n\"Topic\":\"@{triggerBody()?['topic']}\",\n\"Blob\":\"@{outputs('Compose')}\",\n\"Status\":\"@{variables('ReplicationStatus')}\"\n}",
+                                "headers": {
+                                    "Log-Type": "@parameters('LogAnalyticsTableName')",
+                                    "time-generated-field": "@triggerBody()?['eventTime']"
+                                },
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['azureloganalyticsdatacollector']['connectionId']"
+                                    }
+                                },
+                                "method": "post",
+                                "path": "/api/logs"
+                            },
+                            "description": "Send Data to Azure Log Analytics"
+                        },
+                        "Until": {
+                            "actions": {
+                                "Compose_2": {
+                                    "runAfter": {
+                                        "HTTP": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Compose",
+                                    "inputs": "@string(outputs('HTTP')['headers'])"
+                                },
+                                "Condition": {
+                                    "actions": {
+                                        "Compose_3": {
+                                            "runAfter": {},
+                                            "type": "Compose",
+                                            "inputs": "@substring(outputs('Compose_2'),indexOf(outputs('Compose_2'),'x-ms-or'),100)"
+                                        },
+                                        "Condition_2": {
+                                            "actions": {
+                                                "Set_variable_2": {
+                                                    "runAfter": {},
+                                                    "type": "SetVariable",
+                                                    "inputs": {
+                                                        "name": "ReplicationStatus",
+                                                        "value": "ReplicationSucceeded"
+                                                    }
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "Compose_3": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "else": {
+                                                "actions": {
+                                                    "Set_variable_3": {
+                                                        "runAfter": {},
+                                                        "type": "SetVariable",
+                                                        "inputs": {
+                                                            "name": "ReplicationStatus",
+                                                            "value": "ReplicationFailed"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "expression": {
+                                                "and": [
+                                                    {
+                                                        "contains": [
+                                                            "@outputs('Compose_3')",
+                                                            "complete"
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            "type": "If"
+                                        },
+                                        "Set_variable_4": {
+                                            "runAfter": {
+                                                "Condition_2": [
+                                                    "Succeeded"
+                                                ]
+                                            },
+                                            "type": "SetVariable",
+                                            "inputs": {
+                                                "name": "IsComplete",
+                                                "value": "@true"
+                                            }
+                                        }
+                                    },
+                                    "runAfter": {
+                                        "Compose_2": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "else": {
+                                        "actions": {
+                                            "Condition_3": {
+                                                "actions": {
+                                                    "Set_variable_5": {
+                                                        "runAfter": {},
+                                                        "type": "SetVariable",
+                                                        "inputs": {
+                                                            "name": "IsComplete",
+                                                            "value": "@true"
+                                                        }
+                                                    },
+                                                    "Set_variable_6": {
+                                                        "runAfter": {
+                                                            "Set_variable_5": [
+                                                                "Succeeded"
+                                                            ]
+                                                        },
+                                                        "type": "SetVariable",
+                                                        "inputs": {
+                                                            "name": "ReplicationStatus",
+                                                            "value": "ReplicationTimeout"
+                                                        }
+                                                    }
+                                                },
+                                                "runAfter": {
+                                                    "Set_variable": [
+                                                        "Succeeded"
+                                                    ]
+                                                },
+                                                "expression": {
+                                                    "and": [
+                                                        {
+                                                            "equals": [
+                                                                "@variables('LoopCount')",
+                                                                "@parameters('MaxPollIntervalCount')"
+                                                            ]
+                                                        }
+                                                    ]
+                                                },
+                                                "type": "If"
+                                            },
+                                            "Set_variable": {
+                                                "runAfter": {},
+                                                "type": "SetVariable",
+                                                "inputs": {
+                                                    "name": "ReplicationStatus",
+                                                    "value": "ReplicationPending"
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "expression": {
+                                        "and": [
+                                            {
+                                                "contains": [
+                                                    "@outputs('Compose_2')",
+                                                    "x-ms-or"
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    "type": "If"
+                                },
+                                "Delay": {
+                                    "runAfter": {},
+                                    "type": "Wait",
+                                    "inputs": {
+                                        "interval": {
+                                            "count": "@parameters('PollIntervalMinutes')",
+                                            "unit": "Minute"
+                                        }
+                                    }
+                                },
+                                "HTTP": {
+                                    "runAfter": {
+                                        "Delay": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "Http",
+                                    "inputs": {
+                                        "authentication": {
+                                            "audience": "https://storage.azure.com/",
+                                            "type": "ManagedServiceIdentity"
+                                        },
+                                        "headers": {
+                                            "x-ms-date": "@{formatDateTime(utcNow(),'R')}",
+                                            "x-ms-version": "2020-10-02"
+                                        },
+                                        "method": "HEAD",
+                                        "uri": "@{parameters('StorageAccountURL')}/@{outputs('Compose')}"
+                                    }
+                                },
+                                "Increment_variable": {
+                                    "runAfter": {
+                                        "Send_Data_2": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "IncrementVariable",
+                                    "inputs": {
+                                        "name": "LoopCount",
+                                        "value": 1
+                                    }
+                                },
+                                "Send_Data_2": {
+                                    "runAfter": {
+                                        "Condition": [
+                                            "Succeeded"
+                                        ]
+                                    },
+                                    "type": "ApiConnection",
+                                    "inputs": {
+                                        "body": "{\n\"Subject\":\"@{triggerBody()?['subject']}\",\n\"Topic\":\"@{triggerBody()?['topic']}\",\n\"Blob\":\"@{outputs('Compose')}\",\n\"Status\":\"@{variables('ReplicationStatus')}\",\n\"Headers\":\"@{replace(outputs('Compose_2'),'\"','''')}\",\n\"Elapsed\":\"@{div(sub(ticks(utcNow()),ticks(triggerBody()?['eventTime'])),600000000)}\"\n}",
+                                        "headers": {
+                                            "Log-Type": "@parameters('LogAnalyticsTableName')",
+                                            "time-generated-field": "@{utcNow()}"
+                                        },
+                                        "host": {
+                                            "connection": {
+                                                "name": "@parameters('$connections')['azureloganalyticsdatacollector']['connectionId']"
+                                            }
+                                        },
+                                        "method": "post",
+                                        "path": "/api/logs"
+                                    }
+                                }
+                            },
+                            "runAfter": {
+                                "Initialize_LoopCount_variable": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "expression": "@equals(variables('IsComplete'), true)",
+                            "limit": {
+                                "count": 10,
+                                "timeout": "PT2H"
+                            },
+                            "type": "Until"
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "azureeventgrid": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', 'eventGridConnection')]",
+                                "connectionName": "azureeventgrid",
+                                "id": "[subscriptionResourceId('Microsoft.Web/locations/managedApis',resourceGroup().location, 'azureeventgrid')]"
+                            },
+                            "azureloganalyticsdatacollector": {
+                                "connectionId": "[resourceId('Microsoft.Web/connections', 'logAnalyticsConnection')]",
+                                "connectionName": "azureloganalyticsdatacollector",
+                                "id": "[subscriptionResourceId('Microsoft.Web/locations/managedApis',resourceGroup().location, 'azureloganalyticsdatacollector')]"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+    ]
+}

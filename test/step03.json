@@ -1,0 +1,54 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+     "contentVersion": "1.0.0.0",
+     "parameters": {
+         "policyId" : {
+             "type" : "string"
+         },
+         "ruleId" : {
+             "type" : "string"
+         },
+        "sourceStorageAccountName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of the Azure Storage account."
+            }
+        },
+        "targetStorageAccountName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of the Azure Storage account."
+            }
+        },
+        "containerName": {
+            "type": "string",
+            "defaultValue": "logs",
+            "metadata": {
+                "description": "Specifies the name of the blob container."
+            }
+        }
+     },
+     "variables": {},
+     "resources": [
+         {
+             "type": "Microsoft.Storage/storageAccounts/ObjectReplicationPolicies",
+             "apiVersion": "2019-06-01",
+             "name": "[format('{0}/{1}',parameters('sourceStorageAccountName'), parameters('policyId'))]",
+             "properties": {
+                 "policyId": "[parameters('policyId')]",
+                 "sourceAccount": "[parameters('sourceStorageAccountName')]",
+                 "destinationAccount": "[parameters('targetStorageAccountName')]",
+                 "rules": [
+                     {
+                         "ruleId": "[parameters('ruleId')]",
+                         "sourceContainer": "[parameters('containerName')]",
+                         "destinationContainer": "[parameters('containerName')]",
+                         "filters": {
+                             //Any prefixMatch filters here
+                         }
+                     }
+                 ]
+             }
+         }
+     ]
+ } 
