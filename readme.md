@@ -1,6 +1,10 @@
 # Azure Storage Object Replication Monitor
 This sample will create an Azure Logic App that checks each newly created Azure Storage blob to determine if object replication was successful. The status is logged to an Azure Log Analytics workspace in a custom table to facilitate reporting and monitoring. 
 
+![Azure Storage Object Replication Monitor](images/ObjectReplicationMonitor.png)
+
+The sample is deployed with ARM templates, providing a sample to understand deploying Logic Apps with API connections to both Event Grid and Log Analytics. It also demonstrates using a managed identity to securely connect to a data source as a trusted service. 
+
 ## Overview
 This solution uses Azure Event Grid to subscribe to BlobCreated events for an Azure Storage Account. Event Grid is an eventing backplane that enables event-driven, reactive programming. It uses the publish-subscribe model. Publishers emit events, but have no expectation about how the events are handled. Subscribers decide on which events they want to handle. For more information on Event Grid, see [Choose between Azure messaging services - Event Grid, Event Hubs, and Service Bus](https://docs.microsoft.com/en-us/azure/event-grid/compare-messaging-services#azure-event-grid).
 
